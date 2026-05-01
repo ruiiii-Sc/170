@@ -1,0 +1,474 @@
+return function(UI)
+local TweenService = UI.TweenService
+local RunService = UI.RunService
+local Config = UI.Config
+local Players = UI.Players
+local ReplicatedStorage = UI.ReplicatedStorage
+local UIS = UI.UIS
+local VirtualUser = UI.VirtualUser
+local LocalPlayer = UI.LocalPlayer
+local PlaceBlockE = UI.PlaceBlockE
+local function snap3(v) return math.floor((v + 1.5) / 3) * 3 end
+local function sign(n) return n > 0 and 1 or (n < 0 and -1 or 0) end
+local function cleanupFlyObjects()
+if UI.flyAttach and UI.flyAttach.Parent then UI.flyAttach:Destroy() end
+if UI.linearVel and UI.linearVel.Parent then UI.linearVel:Destroy() end
+if UI.aForce and UI.aForce.Parent then UI.aForce:Destroy() end
+UI.flyAttach = nil
+UI.linearVel = nil
+UI.aForce = nil
+end
+local function stopFly()
+UI.flying = false
+cleanupFlyObjects()
+if UI.flyRSConn then UI.flyRSConn:Disconnect(); UI.flyRSConn = nil end
+end
+local function startFly()
+local char = LocalPlayer.Character
+local hrp = char and char:FindFirstChild("HumanoidRootPart")
+local hum = char and char:FindFirstChildOfClass("Humanoid")
+if not hrp or not hum then return end
+cleanupFlyObjects()
+hum:ChangeState(Enum.HumanoidStateType.Freefall)
+UI.flyAttach = Instance.new("Attachment")
+UI.flyAttach.Name = "FlyAttachment"
+UI.flyAttach.Parent = hrp
+UI.aForce = Instance.new("VectorForce")
+UI.aForce.Attachment0 = UI.flyAttach
+UI.aForce.Force = Vector3.new(0, workspace.Gravity * hrp.AssemblyMass, 0)
+UI.aForce.RelativeTo = Enum.ActuatorRelativeTo.World
+UI.aForce.Parent = hrp
+UI.linearVel = Instance.new("LinearVelocity")
+UI.linearVel.Attachment0 = UI.flyAttach
+UI.linearVel.MaxForce = 1e6
+UI.linearVel.VelocityConstraintMode = Enum.VelocityConstraintMode.Vector
+UI.linearVel.VectorVelocity = Vector3.zero
+UI.linearVel.Parent = hrp
+UI.flying = true
+if UI.flyRSConn then UI.flyRSConn:Disconnect() end
+UI.flyRSConn = RunService.RenderStepped:Connect(function()
+local c = LocalPlayer.Character
+local h = c and c:FindFirstChild("HumanoidRootPart")
+if not h or not UI.flying then return end
+if not UI.linearVel or not UI.linearVel.Parent then
+stopFly()
+return
+end
+local cam = workspace.CurrentCamera
+local fwd = cam.CFrame.LookVector
+local rgt = cam.CFrame.RightVector
+local dir = Vector3.zero
+if UIS:IsKeyDown(Enum.KeyCode.W) then dir = dir + fwd end
+if UIS:IsKeyDown(Enum.KeyCode.S) then dir = dir - fwd end
+if UIS:IsKeyDown(Enum.KeyCode.D) then dir = dir + rgt end
+if UIS:IsKeyDown(Enum.KeyCode.A) then dir = dir - rgt end
+if UIS:IsKeyDown(Enum.KeyCode.Space) then dir = dir + Vector3.yAxis end
+if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then dir = dir - Vector3.yAxis end
+UI.linearVel.VectorVelocity = dir.Magnitude > 0 and dir.Unit * UI.flySpeed or Vector3.zero
+if UI.aForce and UI.aForce.Parent then
+UI.aForce.Force = Vector3.new(0, workspace.Gravity * h.AssemblyMass, 0)
+end
+end)
+end
+local function startMasterLoop()
+if UI.masterSteppedConn then return end
+UI.masterSteppedConn = RunService.Stepped:Connect(function()
+local char = LocalPlayer.Character
+local hrp = char and char:FindFirstChild("HumanoidRootPart")
+local hum = char and char:FindFirstChildOfClass("Humanoid")
+if UI.stateWalkSpeed and hrp and hum and hum.MoveDirection.Magnitude > 0 then
+local vel = hum.MoveDirection * UI.customWalkSpeed
+hrp.AssemblyLinearVelocity = Vector3.new(vel.X, hrp.AssemblyLinearVelocity.Y, vel.Z)
+end
+if UI.stateNoclip and char then
+for _, p in ipairs(char:GetDescendants()) do
+if p:IsA("BasePart") and p.CanCollide then p.CanCollide = false end
+end
+end
+end)
+table.insert(_G.LoopRegistry.Active, UI.masterSteppedConn)
+end
+local function startWalkSpeed()
+startMasterLoop()
+end
+local function stopWalkSpeed()
+UI.stateWalkSpeed = false
+end
+local function startNoclip()
+startMasterLoop()
+end
+local function stopNoclip()
+UI.stateNoclip = false
+local char = LocalPlayer.Character
+if char then
+for _, p in ipairs(char:GetChildren()) do
+if p:IsA("BasePart") then p.CanCollide = true end
+end
+end
+end
+local function getBBE()
+return ReplicatedStorage:FindFirstChild("BreakBlockE")
+end
+local function hookInstantBreak()
+if UI.breakHook then return end
+pcall(function()
+local bbe = ReplicatedStorage:WaitForChild("BreakBlockE", 3)
+UI.breakHook = hookmetamethod(game, "__namecall", function(self, ...)
+local args = { ... }
+if self == bbe and getnamecallmethod() == "FireServer" then
+if not UI.isBreaking then UI.lastBreakArgs = args end
+end
+return UI.breakHook(self, ...)
+end)
+end)
+end
+local function startInstantBreak()
+hookInstantBreak()
+if UI.breakLoop then return end
+UI.breakLoop = task.spawn(function()
+while UI.stateInstantBreak do
+task.wait()
+if UI.lastBreakArgs and not UI.isBreaking then
+UI.isBreaking = true
+local args = UI.lastBreakArgs
+UI.lastBreakArgs = nil
+local bbe = getBBE()
+if bbe then
+for _ = 1, UI.BREAKER_RATE do
+pcall(function() bbe:FireServer(table.unpack(args)) end)
+if UI.BREAKER_INTERVAL > 0 then task.wait(UI.BREAKER_INTERVAL) else task.wait() end
+end
+end
+UI.isBreaking = false
+end
+end
+UI.breakLoop = nil
+end)
+table.insert(_G.LoopRegistry.Active, UI.breakLoop)
+end
+local function stopInstantBreak()
+if UI.breakLoop then task.cancel(UI.breakLoop); UI.breakLoop = nil end
+end
+local function applyMageAnim()
+local char = LocalPlayer.Character
+local animate = char and char:FindFirstChild("Animate")
+if not animate then return end
+local idleFolder = animate:FindFirstChild("idle")
+if idleFolder then
+if idleFolder:FindFirstChild("Animation1") then idleFolder.Animation1.AnimationId = "rbxassetid://707742142" end
+if idleFolder:FindFirstChild("Animation2") then idleFolder.Animation2.AnimationId = "rbxassetid://707742142" end
+end
+local anims = {
+walk = { "WalkAnim", "707897309" },
+run = { "RunAnim", "707861613" },
+jump = { "JumpAnim", "707853694" },
+fall = { "FallAnim", "707829716" },
+climb = { "ClimbAnim", "707826056" },
+swim = { "Swim", "707876443" },
+swimidle = { "SwimIdle", "707894699" },
+}
+for folder, data in pairs(anims) do
+local f = animate:FindFirstChild(folder)
+if f then
+local a = f:FindFirstChild(data[1])
+if a then a.AnimationId = "rbxassetid://" .. data[2] end
+end
+end
+end
+local function startMageAnim()
+if UI.mageAnimLoop then return end
+UI.mageAnimLoop = task.spawn(function()
+while UI.stateMageAnim do applyMageAnim() task.wait(2) end
+UI.mageAnimLoop = nil
+end)
+table.insert(_G.LoopRegistry.Active, UI.mageAnimLoop)
+end
+local function stopMageAnim()
+if UI.mageAnimLoop then task.cancel(UI.mageAnimLoop); UI.mageAnimLoop = nil end
+end
+local function applyInfZoom()
+pcall(function() LocalPlayer.CameraMaxZoomDistance = UI.stateInfZoom and 9e9 or 400 end)
+end
+local function applyInfRange()
+if UI.pgOk then UI.globals.MaxPlaceDistance = UI.stateInfRange and 9e9 or 20 end
+end
+local function applyInviscam()
+pcall(function()
+LocalPlayer.DevCameraOcclusionMode = UI.stateInviscam
+and Enum.DevCameraOcclusionMode.Invisicam
+or Enum.DevCameraOcclusionMode.Zoom
+end)
+end
+local function clearFillPreview()
+for _, p in ipairs(UI.fillPreviewParts) do
+pcall(function() p:Destroy() end)
+end
+UI.fillPreviewParts = {}
+end
+local function showFillPreview(x1, y1, z1, x2, y2, z2)
+clearFillPreview()
+local minX, maxX = math.min(x1, x2), math.max(x1, x2)
+local minY, maxY = math.min(y1, y2), math.max(y1, y2)
+local minZ, maxZ = math.min(z1, z2), math.max(z1, z2)
+local sizeX = maxX - minX + 3
+local sizeY = maxY - minY + 3
+local sizeZ = maxZ - minZ + 3
+local cx = minX + (sizeX - 3) / 2
+local cy = minY + (sizeY - 3) / 2
+local cz = minZ + (sizeZ - 3) / 2
+local box = Instance.new("Part")
+box.Anchored = true
+box.CanCollide = false
+box.CastShadow = false
+box.Transparency = 0.75
+box.Color = Color3.fromRGB(0, 162, 255)
+box.Material = Enum.Material.Neon
+box.Size = Vector3.new(sizeX, sizeY, sizeZ)
+box.CFrame = CFrame.new(cx, cy, cz)
+box.Parent = workspace
+local selBox = Instance.new("SelectionBox")
+selBox.Adornee = box
+selBox.Color3 = Color3.fromRGB(0, 200, 255)
+selBox.LineThickness = 0.05
+selBox.SurfaceTransparency = 0.85
+selBox.SurfaceColor3 = Color3.fromRGB(0, 162, 255)
+selBox.Parent = workspace
+table.insert(UI.fillPreviewParts, box)
+table.insert(UI.fillPreviewParts, selBox)
+local arrowPart = Instance.new("Part")
+arrowPart.Anchored = true
+arrowPart.CanCollide = false
+arrowPart.CastShadow = false
+arrowPart.Transparency = 0.3
+arrowPart.Color = Color3.fromRGB(255, 200, 0)
+arrowPart.Material = Enum.Material.Neon
+arrowPart.Size = Vector3.new(0.4, 0.4, (Vector3.new(x2, y2, z2) - Vector3.new(x1, y1, z1)).Magnitude)
+arrowPart.CFrame = CFrame.new(Vector3.new(x1, y1, z1), Vector3.new(x2, y2, z2)) * CFrame.new(0, 0, -arrowPart.Size.Z / 2)
+arrowPart.Parent = workspace
+table.insert(UI.fillPreviewParts, arrowPart)
+local startMark = Instance.new("Part")
+startMark.Anchored = true; startMark.CanCollide = false
+startMark.CastShadow = false; startMark.Transparency = 0.2
+startMark.Color = Color3.fromRGB(255, 60, 60)
+startMark.Material = Enum.Material.Neon
+startMark.Size = Vector3.new(1.5, 1.5, 1.5)
+startMark.CFrame = CFrame.new(x1, y1, z1)
+startMark.Parent = workspace
+table.insert(UI.fillPreviewParts, startMark)
+local endMark = Instance.new("Part")
+endMark.Anchored = true; endMark.CanCollide = false
+endMark.CastShadow = false; endMark.Transparency = 0.2
+endMark.Color = Color3.fromRGB(60, 255, 60)
+endMark.Material = Enum.Material.Neon
+endMark.Size = Vector3.new(1.5, 1.5, 1.5)
+endMark.CFrame = CFrame.new(x2, y2, z2)
+endMark.Parent = workspace
+table.insert(UI.fillPreviewParts, endMark)
+return box
+end
+local function runFill(x1, y1, z1, x2, y2, z2, item, itemRef, face)
+UI.isFilling = true
+UI.stopFill = false
+local minX, maxX = math.min(x1, x2), math.max(x1, x2)
+local minY, maxY = math.min(y1, y2), math.max(y1, y2)
+local minZ, maxZ = math.min(z1, z2), math.max(z1, z2)
+local positions = {}
+local iy = minY
+while iy <= maxY do
+local ix = minX
+while ix <= maxX do
+local iz = minZ
+while iz <= maxZ do
+table.insert(positions, Vector3.new(ix, iy, iz))
+iz = iz + 3
+end
+ix = ix + 3
+end
+iy = iy + 3
+end
+local total = #positions
+UI.setProgress(0, { 0, 162, 255 })
+for i, pos in ipairs(positions) do
+if UI.stopFill then break end
+PlaceBlockE:FireServer(1, { item, pos, itemRef, face })
+UI.setProgress(i / total, { 0, 162, 255 })
+task.wait(0.05)
+end
+UI.isFilling = false
+clearFillPreview()
+UI.setProgress(UI.stopFill and 0 or 1, UI.stopFill and { 254, 94, 86 } or { 39, 201, 63 })
+task.delay(2, function()
+if not UI.isFilling and not UI.isBuilding then UI.setProgress(0, { 39, 201, 63 }) end
+end)
+end
+local function processBreakerQueue()
+if UI.breakerRunning then return end
+UI.breakerRunning = true
+UI.breakerLoop = task.spawn(function()
+while #UI.breakerQueue > 0 do
+local args = table.remove(UI.breakerQueue, 1)
+local bbe = getBBE()
+if bbe then
+for _ = 1, UI.BREAKER_RATE do
+pcall(function() bbe:FireServer(table.unpack(args)) end)
+if UI.BREAKER_INTERVAL > 0 then task.wait(UI.BREAKER_INTERVAL) else task.wait() end
+end
+end
+end
+UI.breakerRunning = false
+UI.breakerLoop = nil
+end)
+end
+local function queueBreak(...)
+local args = { ... }
+table.insert(UI.breakerQueue, args)
+processBreakerQueue()
+end
+local function clearBreakerQueue()
+UI.breakerQueue = {}
+if UI.breakerLoop then
+pcall(function() task.cancel(UI.breakerLoop) end)
+UI.breakerLoop = nil
+end
+UI.breakerRunning = false
+end
+local function startAntiAfk()
+if UI.antiAfkConn then UI.antiAfkConn:Disconnect() end
+UI.antiAfkConn = LocalPlayer.Idled:Connect(function()
+VirtualUser:ClickButton2(Vector2.new())
+end)
+end
+local function stopAntiAfk()
+if UI.antiAfkConn then UI.antiAfkConn:Disconnect(); UI.antiAfkConn = nil end
+end
+local function destroyFlowingWaterObject(instance)
+if not UI.stateFlowingWater then return end
+local n = instance.Name
+if n == "FlowingWater" or n == "WaterPusher" or n == "FlowingLava" or n == "LavaPusher" then
+pcall(function() instance:Destroy() end)
+elseif instance:IsA("ParticleEmitter") and (n:lower():find("water") or n:lower():find("lava")) then
+pcall(function() instance:Destroy() end)
+elseif instance:IsA("Decal") and (n:lower():find("water") or n:lower():find("lava")) then
+pcall(function() instance:Destroy() end)
+end
+end
+local function setupFlowingWaterRemover()
+if UI.flowingWaterConn then UI.flowingWaterConn:Disconnect() end
+local descendants = workspace:GetDescendants()
+for i = 1, #descendants do
+destroyFlowingWaterObject(descendants[i])
+end
+UI.flowingWaterConn = workspace.DescendantAdded:Connect(destroyFlowingWaterObject)
+table.insert(_G.LoopRegistry.Active, UI.flowingWaterConn)
+end
+local function stopFlowingWaterRemover()
+if UI.flowingWaterConn then
+UI.flowingWaterConn:Disconnect()
+UI.flowingWaterConn = nil
+end
+end
+local function apply3DRendering()
+RunService:Set3dRenderingEnabled(not UI.stateDisable3DRender)
+end
+local function startInfJump()
+if UI.infJumpConn then UI.infJumpConn:Disconnect() end
+UI.infJumpConn = UIS.JumpRequest:Connect(function()
+if not UI.stateInfJump then return end
+local char = LocalPlayer.Character
+local hum = char and char:FindFirstChildOfClass("Humanoid")
+if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
+end)
+end
+local function stopInfJump()
+if UI.infJumpConn then UI.infJumpConn:Disconnect(); UI.infJumpConn = nil end
+end
+local function applyInfItemLimit()
+for _, f in pairs(getgc(true)) do
+if type(f) == "table" then
+for g, h in pairs(f) do
+if type(g) == "string" and type(h) == "number" then
+if g:lower():find("item") or g:lower():find("limit") then
+pcall(function() f[g] = math.huge end)
+end
+end
+if type(h) == "string" and type(f[g]) == "number" then
+if h:lower():find("item") or h:lower():find("limit") then
+pcall(function() f[g] = math.huge end)
+end
+end
+end
+end
+if type(f) == "function" then
+for i = 1, 10 do
+local ok, n, v = pcall(debug.getupvalue, f, i)
+if ok and type(n) == "string" and type(v) == "number" then
+if n:lower():find("limit") or n:lower():find("item") then
+pcall(debug.setupvalue, f, i, math.huge)
+end
+end
+end
+end
+end
+end
+UI.cleanupFlyObjects = cleanupFlyObjects
+UI.stopFly = stopFly
+UI.startFly = startFly
+UI.startMasterLoop = startMasterLoop
+UI.startWalkSpeed = startWalkSpeed
+UI.stopWalkSpeed = stopWalkSpeed
+UI.startNoclip = startNoclip
+UI.stopNoclip = stopNoclip
+UI.getBBE = getBBE
+UI.hookInstantBreak = hookInstantBreak
+UI.startInstantBreak = startInstantBreak
+UI.stopInstantBreak = stopInstantBreak
+UI.applyMageAnim = applyMageAnim
+UI.startMageAnim = startMageAnim
+UI.stopMageAnim = stopMageAnim
+UI.applyInfZoom = applyInfZoom
+UI.applyInfRange = applyInfRange
+UI.applyInviscam = applyInviscam
+UI.clearFillPreview = clearFillPreview
+UI.showFillPreview = showFillPreview
+UI.runFill = runFill
+UI.processBreakerQueue = processBreakerQueue
+UI.queueBreak = queueBreak
+UI.clearBreakerQueue = clearBreakerQueue
+UI.startAntiAfk = startAntiAfk
+UI.stopAntiAfk = stopAntiAfk
+UI.destroyFlowingWaterObject = destroyFlowingWaterObject
+UI.setupFlowingWaterRemover = setupFlowingWaterRemover
+UI.stopFlowingWaterRemover = stopFlowingWaterRemover
+UI.apply3DRendering = apply3DRendering
+UI.startInfJump = startInfJump
+UI.stopInfJump = stopInfJump
+UI.applyInfItemLimit = applyInfItemLimit
+if UI.pgOk then UI.globals.MaxPlaceDistance = 9e9 end
+if UI.stateAntiAfk then UI.startAntiAfk() end
+if UI.stateFlowingWater then UI.setupFlowingWaterRemover() end
+local lastSpaceTime = 0
+local doubleTapDelay = 0.4
+local function setupFlyInputAndRespawn()
+if UI.flyConn then UI.flyConn:Disconnect() end
+UI.flyConn = UIS.InputBegan:Connect(function(input, gp)
+if gp then return end
+if input.KeyCode == Enum.KeyCode.Space then
+local now = tick()
+if now - lastSpaceTime <= doubleTapDelay then
+if UI.flying then UI.stopFly() else UI.startFly() end
+end
+lastSpaceTime = now
+end
+end)
+LocalPlayer.CharacterAdded:Connect(function()
+local wasFlying = UI.flying
+UI.stopFly()
+lastSpaceTime = 0
+if wasFlying then
+task.wait(1)
+UI.startFly()
+end
+end)
+end
+setupFlyInputAndRespawn()
+end

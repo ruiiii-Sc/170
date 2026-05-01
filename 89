@@ -182,6 +182,7 @@ Header.Size             = UDim2.new(1, 0, 0, TOPBAR_H)
 Header.BackgroundColor3 = Color3.fromRGB(28, 28, 34)
 Header.BorderSizePixel  = 0
 Header.ZIndex           = 5
+Header.Active           = true
 Instance.new("UICorner", Header).CornerRadius = UDim.new(0, 10)
 UI.Header = Header
 
@@ -325,9 +326,6 @@ local function createRow(labelTxt, yPos)
 	reset.TextSize         = 12
 	reset.TextColor3       = Color3.fromRGB(255, 80, 80)
 	Instance.new("UICorner", reset).CornerRadius = UDim.new(0, 5)
-	reset.MouseButton1Click:Connect(function()
-		tx.Text = "0"; ty.Text = "0"; tz.Text = "0"
-	end)
 	return tx, ty, tz, freeze, reset, lbl
 end
 

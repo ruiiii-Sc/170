@@ -588,10 +588,14 @@ return function(UI)
 				b.BackgroundColor3 = Color3.fromRGB(55, 85, 145)
 			end)
 		end
-		UI.ItemScroll.CanvasSize = UDim2.new(0, 0, 0, UI.UIList.AbsoluteContentSize.Y + 6)
+		task.defer(function()
+			UI.ItemScroll.CanvasSize = UDim2.new(0, 0, 0, UI.UIList.AbsoluteContentSize.Y + 6)
+		end)
 	end
 
-	task.spawn(function() while true do updateInvGui() task.wait(10) end end)
+	task.defer(updateInvGui)
+	local invLoop = task.spawn(function() while true do task.wait(10) updateInvGui() end end)
+	table.insert(_G.LoopRegistry.Active, invLoop)
 
 	local function updateSourcePillColor()
 		if UI.sourceMode == "Player" then
@@ -832,12 +836,14 @@ return function(UI)
 				dragging  = true
 				dragStart = input.Position
 				startPos  = target.Position
-				input.Changed:Connect(function()
-					if input.UserInputState == Enum.UserInputState.End then dragging = false end
-				end)
 			end
 		end)
-		handle.InputChanged:Connect(function(input)
+		handle.InputEnded:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 then
+				dragging = false
+			end
+		end)
+		UIS.InputChanged:Connect(function(input)
 			if input.UserInputType == Enum.UserInputType.MouseMovement and dragging then
 				local d = input.Position - dragStart
 				target.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
